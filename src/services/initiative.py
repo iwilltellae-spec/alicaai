@@ -134,8 +134,14 @@ async def _send_initiative(
 
     parts = split_messages(reply, max_parts=2)
     for i, part in enumerate(parts):
-        if i > 0:
-            await asyncio.sleep(typing_pause(part))
+        # Перед КАЖДОЙ частью пауза (первая чуть короче).
+        pause = typing_pause(part) if i > 0 else min(1.2, 0.4 + len(part) * 0.015)
+        try:
+            from aiogram.enums import ChatAction
+            await bot.send_chat_action(user_id, ChatAction.TYPING)
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(pause)
         try:
             await bot.send_message(user_id, asterisks_to_italic(part))
         except Exception as e:  # noqa: BLE001
