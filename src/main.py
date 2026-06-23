@@ -1,4 +1,4 @@
-"""Точка входа: HTTP healthcheck + Telegram polling + keep-alive."""
+"""Точка входа: HTTP healthcheck + Telegram polling + keep-alive + initiative."""
 from __future__ import annotations
 
 import asyncio
@@ -14,9 +14,11 @@ from src.bot.menu import setup_menu
 from src.bot.middlewares.dependencies import DependenciesMiddleware
 from src.bot.middlewares.whitelist import WhitelistMiddleware
 from src.config import settings
+from src.services.initiative import initiative_loop
 from src.services.keepalive import keepalive_loop
 from src.services.memory import ChatMemory
 from src.services.openrouter import OpenRouterClient
+from src.services.weather import WeatherService
 from src.utils.logger import get_logger, setup_logging
 
 
@@ -50,12 +52,11 @@ async def main() -> None:
         models=settings.openrouter_models_chain,
     )
     memory = ChatMemory(max_messages=settings.history_size)
+    weather = WeatherService()
 
-    # Middlewares: применяем и к message, и к callback_query
-    # (для callback_query тоже нужна проверка whitelist и dependencies).
     for observer in (dp.message, dp.callback_query):
         observer.middleware(WhitelistMiddleware(settings.allowed_user_ids))
-        observer.middleware(DependenciesMiddleware(llm, memory))
+        observer.middleware(DependenciesMiddleware(llm, memory, weather))
 
     dp.include_router(get_root_router())
 
@@ -63,8 +64,11 @@ async def main() -> None:
     logger.info("HTTP on port %s", os.environ.get("PORT", "8080"))
 
     keepalive_task = asyncio.create_task(keepalive_loop())
+    initiative_task = asyncio.create_task(
+        initiative_loop(bot, llm, memory, weather)
+    )
 
-    logger.info("Жду 15 сек перед polling (фикс конфликта старых инстансов)…")
+    logger.info("Жду 15 сек перед polling…")
     await asyncio.sleep(15)
 
     try:
@@ -82,6 +86,8 @@ async def main() -> None:
     finally:
         logger.info("Bot shutting down…")
         keepalive_task.cancel()
+        initiative_task.cancel()
+        await weather.close()
         await llm.close()
         await bot.session.close()
         await http_runner.cleanup()
