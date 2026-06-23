@@ -8,6 +8,7 @@ from aiogram.types import TelegramObject
 
 from src.services.memory import ChatMemory
 from src.services.openrouter import OpenRouterClient
+from src.services.profile import ProfileStorage
 from src.services.weather import WeatherService
 
 
@@ -17,10 +18,12 @@ class DependenciesMiddleware(BaseMiddleware):
         llm: OpenRouterClient,
         memory: ChatMemory,
         weather: WeatherService,
+        storage: ProfileStorage,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._weather = weather
+        self._storage = storage
 
     async def __call__(
         self,
@@ -31,4 +34,5 @@ class DependenciesMiddleware(BaseMiddleware):
         data["llm"] = self._llm
         data["memory"] = self._memory
         data["weather"] = self._weather
+        data["storage"] = self._storage
         return await handler(event, data)
