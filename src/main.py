@@ -15,6 +15,7 @@ from src.bot.middlewares.dependencies import DependenciesMiddleware
 from src.bot.middlewares.whitelist import WhitelistMiddleware
 from src.bot.tg_menu import setup_menu
 from src.config import settings
+from src.services.db import Database
 from src.services.initiative import initiative_loop
 from src.services.keepalive import keepalive_loop
 from src.services.memory import ChatMemory
@@ -49,13 +50,36 @@ async def main() -> None:
     )
     dp = Dispatcher(storage=MemoryStorage())
 
+    # ---- БД ----
+    db: Database | None = None
+    if settings.database_url:
+        db = Database(settings.database_url)
+        try:
+            await db.connect()
+        except Exception as e:  # noqa: BLE001
+            logger.error("БД не подключилась: %s. Работаем в файловом режиме.", e)
+            db = None
+    else:
+        logger.warning("DATABASE_URL не задан — работаем в файловом режиме (/tmp).")
+
+    # ---- сервисы ----
     llm = OpenRouterClient(
         api_key=settings.openrouter_api_key,
         models=settings.openrouter_models_chain,
     )
-    memory = ChatMemory(max_messages=settings.history_size)
+    memory = ChatMemory(max_messages=settings.history_size, db=db)
     weather = WeatherService()
-    profiles = ProfileStorage()
+    profiles = ProfileStorage(db=db)
+    await profiles.init()
+
+    # При старте подгрузим consent из БД для всех известных юзеров — чтобы
+    # инициатива работала после перезагрузки.
+    if db:
+        try:
+            for uid in await db.all_user_ids():
+                memory.grant_consent(uid)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Не смог загрузить consent: %s", e)
 
     for observer in (dp.message, dp.callback_query):
         observer.middleware(WhitelistMiddleware(settings.allowed_user_ids))
@@ -93,6 +117,8 @@ async def main() -> None:
         await weather.close()
         await llm.close()
         await bot.session.close()
+        if db:
+            await db.close()
         await http_runner.cleanup()
 
 

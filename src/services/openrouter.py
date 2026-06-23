@@ -1,12 +1,13 @@
 """
 Клиент OpenRouter с автоматическим fallback на резервные модели.
 
-Если основная модель отвечает 429 (rate limit), 503 (нет capacity), или
-другой временной ошибкой — клиент сам пробует следующую модель из цепочки.
-Это делает бота устойчивым к перегрузкам бесплатных моделей.
+Если основная модель отвечает 429 (rate limit upstream), 503 (нет capacity),
+или другой временной ошибкой — клиент сам пробует следующую модель из цепочки,
+с небольшой задержкой между попытками.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 import aiohttp
@@ -16,9 +17,11 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# HTTP-коды, при которых имеет смысл пробовать следующую модель.
 _RETRYABLE_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+# Задержка между попытками fallback. Без неё провайдер часто возвращает
+# 429 подряд для одного и того же IP-источника.
+_FALLBACK_DELAY_SEC = 1.5
 
 
 class OpenRouterError(Exception):
@@ -61,6 +64,9 @@ class OpenRouterClient:
         last_error: Exception | None = None
 
         for idx, model in enumerate(self._models):
+            # Перед каждой попыткой кроме первой — небольшая пауза.
+            if idx > 0:
+                await asyncio.sleep(_FALLBACK_DELAY_SEC)
             try:
                 reply = await self._chat_one(
                     model, messages, temperature=temperature, max_tokens=max_tokens
@@ -70,17 +76,16 @@ class OpenRouterClient:
                 return reply
             except OpenRouterError as e:
                 last_error = e
-                # Если это не «временная» ошибка — нет смысла дёргать резервы (ключ битый и т.п.)
                 if not getattr(e, "retryable", False):
                     raise
                 logger.warning(
-                    "Модель %s упала (%s) — пробую следующую…", model, e
+                    "Модель %s упала (%s) — пробую следующую через %.1fs…",
+                    model, e, _FALLBACK_DELAY_SEC,
                 )
 
-        # Все модели легли.
         raise OpenRouterError(
-            f"Все модели сейчас недоступны (429/503). "
-            f"Подожди 30 секунд и попробуй ещё раз. Последняя ошибка: {last_error}"
+            f"Все модели сейчас недоступны. Подожди минуту и попробуй ещё раз.\n"
+            f"Последняя ошибка: {last_error}"
         )
 
     async def _chat_one(
@@ -113,7 +118,14 @@ class OpenRouterClient:
                 err = (data.get("error") or {}).get("message") or str(data)[:300]
                 logger.error("OpenRouter %s on %s: %s", resp.status, model, err)
                 exc = OpenRouterError(self._humanize(resp.status, err))
-                exc.retryable = resp.status in _RETRYABLE_STATUSES or "rate" in err.lower()
+                # 404 (модель не найдена) — пробуем следующую: модель просто
+                # не существует, а не сломалась.
+                exc.retryable = (
+                    resp.status in _RETRYABLE_STATUSES
+                    or resp.status == 404
+                    or "rate" in err.lower()
+                    or "no endpoints" in err.lower()
+                )
                 raise exc
 
             try:

@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     )
 
     allowed_user_ids_raw: str = Field("", alias="ALLOWED_USER_IDS")
-    history_size: int = Field(20, alias="HISTORY_SIZE")
+    history_size: int = Field(40, alias="HISTORY_SIZE")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
+
+    # БД (Neon Postgres). Если пусто — работает в in-memory режиме (как раньше).
+    database_url: str = Field("", alias="DATABASE_URL")
 
     @property
     def allowed_user_ids(self) -> set[int]:

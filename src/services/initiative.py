@@ -31,14 +31,11 @@ def _moscow_now() -> datetime.datetime:
 
 
 async def initiative_loop(
-    bot: Bot,
-    llm: OpenRouterClient,
-    memory: ChatMemory,
-    weather: WeatherService,
-    storage: ProfileStorage,
+    bot: Bot, llm: OpenRouterClient, memory: ChatMemory,
+    weather: WeatherService, storage: ProfileStorage,
 ) -> None:
     logger.info(
-        "Инициатива: каждые %d мин, после %.1f ч молчания, окно %d-%d МСК",
+        "Инициатива: каждые %d мин, после %.1f ч, окно %d-%d МСК",
         CHECK_INTERVAL_SEC // 60, SILENT_AFTER_HOURS,
         ALLOWED_HOUR_FROM, ALLOWED_HOUR_TO,
     )
@@ -51,10 +48,7 @@ async def initiative_loop(
         await asyncio.sleep(CHECK_INTERVAL_SEC)
 
 
-async def _tick(
-    bot: Bot, llm: OpenRouterClient, memory: ChatMemory,
-    weather: WeatherService, storage: ProfileStorage,
-) -> None:
+async def _tick(bot, llm, memory, weather, storage):
     now = _moscow_now()
     if not (ALLOWED_HOUR_FROM <= now.hour <= ALLOWED_HOUR_TO):
         return
@@ -74,22 +68,22 @@ async def _tick(
         await _send_initiative(bot, llm, memory, weather, storage, user_id)
 
 
-async def _send_initiative(
-    bot: Bot, llm: OpenRouterClient, memory: ChatMemory,
-    weather: WeatherService, storage: ProfileStorage, user_id: int,
-) -> None:
-    profile = storage.get(user_id)
+async def _send_initiative(bot, llm, memory, weather, storage, user_id):
+    profile = await storage.get(user_id)
     girl = profile.get_active_girl()
     logger.info("Initiative → user=%s, girl=%s", user_id, girl.name)
 
+    history = await memory.get_history(user_id, girl.id)
+    facts = await memory.get_facts(user_id, girl.id)
     system = build_system_prompt(
         girl=girl,
         mood=memory.get_mood(user_id),
         weather=await weather.get(),
         now=_moscow_now(),
+        facts=facts,
         style="initiative",
     )
-    messages = [{"role": "system", "content": system}, *memory.get_history(user_id)]
+    messages = [{"role": "system", "content": system}, *history]
     messages.append({"role": "user", "content": "(он молчит, напиши ему сама первой)"})
 
     try:
@@ -102,7 +96,7 @@ async def _send_initiative(
     if not reply:
         return
 
-    memory.add_assistant(user_id, reply)
+    await memory.add_assistant(user_id, girl.id, reply)
     memory.mark_initiative(user_id)
 
     parts = split_messages(reply, max_parts=3)

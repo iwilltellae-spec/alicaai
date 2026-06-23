@@ -1,4 +1,4 @@
-"""Возрастной gate + переход в главное меню."""
+"""Возрастной gate."""
 from __future__ import annotations
 
 from aiogram import F, Router
@@ -31,14 +31,16 @@ def _consent_kb() -> InlineKeyboardMarkup:
 @router.message(Command("start"))
 async def cmd_start(message: Message, memory: ChatMemory,
                     storage: ProfileStorage) -> None:
+    # Проверим persistent consent — у профиля в БД он мог сохраниться.
+    profile = await storage.get(message.from_user.id)
+    if profile.consented:
+        memory.grant_consent(message.from_user.id)
     if memory.has_consent(message.from_user.id):
-        profile = storage.get(message.from_user.id)
         girl = profile.get_active_girl()
-        storage.commit(profile)
+        await storage.commit(profile)
         await message.answer(
-            f"С возвращением 👋\n"
-            f"Активна: <b>{girl.name}</b>\n\n"
-            f"Просто пиши ей. Или открой /menu."
+            f"С возвращением 👋\nАктивна: <b>{girl.name}</b>\n\n"
+            f"Просто пиши ей. Меню — /menu"
         )
         return
     await message.answer(AGE_GATE_TEXT, reply_markup=_consent_kb())
@@ -48,17 +50,15 @@ async def cmd_start(message: Message, memory: ChatMemory,
 async def consent_yes(query: CallbackQuery, memory: ChatMemory,
                       storage: ProfileStorage) -> None:
     memory.grant_consent(query.from_user.id)
-    profile = storage.get(query.from_user.id)
+    profile = await storage.get(query.from_user.id)
+    profile.consented = True
     girl = profile.get_active_girl()
-    storage.commit(profile)
+    await storage.commit(profile)
     logger.info("Consent: user=%s, balance=%d", query.from_user.id, profile.balance)
-
     await query.message.edit_text(
-        f"Готово ✅\n\n"
-        f"Тебя ждёт <b>{girl.name}</b>.\n"
+        f"Готово ✅\n\nТебя ждёт <b>{girl.name}</b>.\n"
         f"💰 Стартовый баланс: <b>{profile.balance} 🪙</b>\n\n"
-        f"Просто напиши ей.\n"
-        f"Открыть меню — /menu",
+        f"Просто напиши ей.\nМеню — /menu",
     )
     await query.answer()
 
