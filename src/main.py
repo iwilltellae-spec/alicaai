@@ -71,8 +71,11 @@ async def main() -> None:
     memory = ChatMemory(max_messages=settings.history_size, db=db)
     weather = WeatherService()
     profiles = ProfileStorage(db=db)
+    # Image generation использует ОТДЕЛЬНЫЙ ключ от NeuroRouters
+    # (там Nano Banana бесплатно). Если ключа нет — фото-функция
+    # будет отвечать ошибкой "не получилось сфоткать".
     image_gen = ImageGenerator(
-        api_key=settings.openrouter_api_key,
+        api_key=settings.neurorouters_api_key or settings.openrouter_api_key,
         bot_token=settings.bot_token,
     )
     await profiles.init()

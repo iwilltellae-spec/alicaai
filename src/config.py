@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # БД (Neon Postgres). Если пусто — работает в in-memory режиме (как раньше).
     database_url: str = Field("", alias="DATABASE_URL")
 
+    # Image generation через NeuroRouters (отдельный провайдер с бесплатной
+    # Nano Banana). Если пусто — фото-функция отключена с предупреждением.
+    neurorouters_api_key: str = Field("", alias="NEUROROUTERS_API_KEY")
+
     @property
     def allowed_user_ids(self) -> set[int]:
         raw = (self.allowed_user_ids_raw or "").strip()
