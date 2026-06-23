@@ -6,14 +6,16 @@ import datetime
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from src.character.persona import build_system_prompt
 from src.services.memory import ChatMemory
 from src.services.openrouter import OpenRouterClient, OpenRouterError
+from src.services.profile import ProfileStorage
 from src.services.weather import WeatherService
 from src.utils.logger import get_logger
-from src.utils.text import asterisks_to_italic, split_messages, typing_pause
+from src.utils.text import split_messages, strip_asterisks, typing_pause
 
 logger = get_logger(__name__)
 router = Router(name="chat")
@@ -22,50 +24,37 @@ router = Router(name="chat")
 # ---------------- helpers ----------------
 
 async def _send_typing(message: Message, seconds: float) -> None:
-    """
-    Держим индикатор «печатает...» И обязательно ждём `seconds` секунд.
-    Sleep идёт независимо от того, удался ли typing-индикатор —
-    иначе сообщения могут прилететь без задержки если Telegram API залагал.
-    """
+    """Держим typing-индикатор И обязательно ждём seconds секунд."""
     elapsed = 0.0
     while elapsed < seconds:
         try:
             await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         except Exception:  # noqa: BLE001
-            pass  # индикатор не критичен, продолжаем спать
+            pass
         chunk = min(4.0, seconds - elapsed)
         await asyncio.sleep(chunk)
         elapsed += chunk
 
 
-def _clean_reply(text: str) -> str:
+def _clean_reply(text: str, girl_name: str = "") -> str:
     text = text.strip()
-    for prefix in ("Алиса:", "Alice:", "Алиса —", "Алиса -"):
-        if text.startswith(prefix):
-            text = text[len(prefix):].lstrip()
+    prefixes = [f"{girl_name}:", f"{girl_name} —", f"{girl_name} -",
+                "Алиса:", "Alice:"]
+    for p in prefixes:
+        if p and text.startswith(p):
+            text = text[len(p):].lstrip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in '"«':
         text = text[1:-1].strip()
+    text = strip_asterisks(text)
     return text or "…"
 
 
-async def _stream_reply_as_messages(
-    message: Message,
-    full_text: str,
-) -> None:
-    """
-    Разбивает ответ на пачку коротких сообщений и шлёт их по очереди
-    с реалистичными паузами + индикатором печати между ними.
-    Перед КАЖДОЙ частью (включая первую) — пауза, чтобы выглядело
-    как будто Алиса печатает живьём.
-    """
-    parts = split_messages(full_text, max_parts=4)
-    for i, part in enumerate(parts):
-        # Пауза перед каждой частью.
-        # Первая — короткая (модель уже думала), остальные — пропорционально длине.
-        pause = typing_pause(part) if i > 0 else min(1.2, 0.4 + len(part) * 0.015)
-        await _send_typing(message, pause)
-        formatted = asterisks_to_italic(part)
-        await message.answer(formatted)
+async def _stream_reply(message: Message, full_text: str) -> None:
+    """Шлём ответ кусками с реалистичной задержкой ПЕРЕД каждым."""
+    parts = split_messages(full_text, max_parts=8)
+    for part in parts:
+        await _send_typing(message, typing_pause(part))
+        await message.answer(part)
 
 
 # ---------------- handlers ----------------
@@ -74,19 +63,29 @@ async def _stream_reply_as_messages(
 async def handle_text(
     message: Message,
     bot: Bot,
+    state: FSMContext,
     llm: OpenRouterClient,
     memory: ChatMemory,
     weather: WeatherService,
+    storage: ProfileStorage,
 ) -> None:
     user_id = message.from_user.id
 
-    if not memory.has_consent(user_id):
-        await message.answer("Нужно сначала подтвердить возраст. Нажми /start")
+    # Если юзер в визарде — не реагируем как на чат.
+    if await state.get_state() is not None:
         return
+
+    if not memory.has_consent(user_id):
+        await message.answer("Сначала /start и подтверди возраст.")
+        return
+
+    profile = storage.get(user_id)
+    girl = profile.get_active_girl()
 
     memory.add_user(user_id, message.text)
 
     system = build_system_prompt(
+        girl=girl,
         mood=memory.get_mood(user_id),
         weather=await weather.get(),
         now=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3),
@@ -94,16 +93,10 @@ async def handle_text(
     )
     messages = [{"role": "system", "content": system}, *memory.get_history(user_id)]
 
-    # Стартовая пауза «увидела сообщение, начала печатать».
-    initial_pause = min(2.5, 0.8 + len(message.text) * 0.02)
-    await _send_typing(message, initial_pause)
-
     try:
-        # Чуть выше temperature → ответы живее, разнообразнее, меньше шаблонов.
         reply = await llm.chat(messages, temperature=1.0)
     except OpenRouterError as e:
         await message.answer(f"❌ {e}")
-        # откатываем непрожитое сообщение из истории
         bucket = memory._bucket(user_id)  # noqa: SLF001
         if bucket and bucket[-1]["role"] == "user":
             bucket.pop()
@@ -113,56 +106,57 @@ async def handle_text(
         await message.answer(f"❌ Что-то пошло не так: {e}")
         return
 
-    reply = _clean_reply(reply)
+    reply = _clean_reply(reply, girl.name)
     memory.add_assistant(user_id, reply)
-    await _stream_reply_as_messages(message, reply)
+    await _stream_reply(message, reply)
 
 
 @router.message(F.photo)
 async def handle_photo(
     message: Message,
     bot: Bot,
+    state: FSMContext,
     llm: OpenRouterClient,
     memory: ChatMemory,
     weather: WeatherService,
+    storage: ProfileStorage,
 ) -> None:
+    if await state.get_state() is not None:
+        return
     user_id = message.from_user.id
-
     if not memory.has_consent(user_id):
-        await message.answer("Нужно сначала подтвердить возраст. Нажми /start")
+        await message.answer("Сначала /start и подтверди возраст.")
         return
 
-    # Берём фото в наибольшем разрешении.
+    profile = storage.get(user_id)
+    girl = profile.get_active_girl()
+
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
-    caption = message.caption or "(прислал тебе фото без подписи)"
+    caption = message.caption or "(прислал фото без подписи)"
 
-    # В историю кладём текстовую заметку (модель помнит что было фото).
     memory.add_user(user_id, f"[фото] {caption}")
 
     system = build_system_prompt(
+        girl=girl,
         mood=memory.get_mood(user_id),
         weather=await weather.get(),
         now=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3),
         style="photo",
     )
-
-    # Multimodal-сообщение по OpenAI-формату (OpenRouter поддерживает).
     user_content = [
         {"type": "text", "text": caption},
         {"type": "image_url", "image_url": {"url": file_url}},
     ]
     messages = [
         {"role": "system", "content": system},
-        *memory.get_history(user_id)[:-1],  # без последнего, заменим на multimodal
+        *memory.get_history(user_id)[:-1],
         {"role": "user", "content": user_content},
     ]
 
-    await _send_typing(message, 2.0)
-
     try:
-        reply = await llm.chat(messages)
+        reply = await llm.chat(messages, temperature=1.0)
     except OpenRouterError as e:
         await message.answer(f"❌ {e}")
         return
@@ -171,6 +165,6 @@ async def handle_photo(
         await message.answer(f"❌ Что-то пошло не так: {e}")
         return
 
-    reply = _clean_reply(reply)
+    reply = _clean_reply(reply, girl.name)
     memory.add_assistant(user_id, reply)
-    await _stream_reply_as_messages(message, reply)
+    await _stream_reply(message, reply)
