@@ -47,7 +47,7 @@ async def main() -> None:
 
     llm = OpenRouterClient(
         api_key=settings.openrouter_api_key,
-        model=settings.openrouter_model,
+        models=settings.openrouter_models_chain,
     )
     memory = ChatMemory(max_messages=settings.history_size)
 
@@ -73,7 +73,9 @@ async def main() -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning("Меню не установилось: %s", e)
 
-    logger.info("Bot is starting… model=%s", settings.openrouter_model)
+    logger.info(
+        "Bot is starting… models=%s", " → ".join(settings.openrouter_models_chain)
+    )
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
