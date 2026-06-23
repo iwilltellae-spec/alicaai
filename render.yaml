@@ -14,6 +14,8 @@ services:
         sync: false
       - key: ALLOWED_USER_IDS
         sync: false
+      - key: DATABASE_URL
+        sync: false           # Neon Postgres connection string (postgresql://...)
       - key: OPENROUTER_MODEL
         value: cognitivecomputations/dolphin-mistral-24b-venice-edition:free
       - key: OPENROUTER_FALLBACKS
