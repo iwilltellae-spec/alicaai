@@ -1,4 +1,4 @@
-"""Точка входа: HTTP healthcheck + Telegram polling + keep-alive + initiative."""
+"""Точка входа."""
 from __future__ import annotations
 
 import asyncio
@@ -7,17 +7,19 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiohttp import web
 
 from src.bot.handlers import get_root_router
-from src.bot.menu import setup_menu
 from src.bot.middlewares.dependencies import DependenciesMiddleware
 from src.bot.middlewares.whitelist import WhitelistMiddleware
+from src.bot.tg_menu import setup_menu
 from src.config import settings
 from src.services.initiative import initiative_loop
 from src.services.keepalive import keepalive_loop
 from src.services.memory import ChatMemory
 from src.services.openrouter import OpenRouterClient
+from src.services.profile import ProfileStorage
 from src.services.weather import WeatherService
 from src.utils.logger import get_logger, setup_logging
 
@@ -45,7 +47,7 @@ async def main() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     llm = OpenRouterClient(
         api_key=settings.openrouter_api_key,
@@ -53,10 +55,11 @@ async def main() -> None:
     )
     memory = ChatMemory(max_messages=settings.history_size)
     weather = WeatherService()
+    profiles = ProfileStorage()
 
     for observer in (dp.message, dp.callback_query):
         observer.middleware(WhitelistMiddleware(settings.allowed_user_ids))
-        observer.middleware(DependenciesMiddleware(llm, memory, weather))
+        observer.middleware(DependenciesMiddleware(llm, memory, weather, profiles))
 
     dp.include_router(get_root_router())
 
@@ -65,7 +68,7 @@ async def main() -> None:
 
     keepalive_task = asyncio.create_task(keepalive_loop())
     initiative_task = asyncio.create_task(
-        initiative_loop(bot, llm, memory, weather)
+        initiative_loop(bot, llm, memory, weather, profiles)
     )
 
     logger.info("Жду 15 сек перед polling…")
