@@ -15,7 +15,7 @@ services:
       - key: ALLOWED_USER_IDS
         sync: false
       - key: OPENROUTER_MODEL
-        value: deepseek/deepseek-chat-v3.1:free
+        value: cognitivecomputations/dolphin-mistral-24b-venice-edition:free
       - key: HISTORY_SIZE
         value: "20"
       - key: LOG_LEVEL

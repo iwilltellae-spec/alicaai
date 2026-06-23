@@ -60,10 +60,10 @@
 В Render → Environment → `OPENROUTER_MODEL` → впиши другую модель.
 
 **Хорошие бесплатные на 2026:**
-- `deepseek/deepseek-chat-v3.1:free` ⭐ — баланс качества и свободы
-- `meta-llama/llama-3.3-70b-instruct:free` — умная, но иногда «правильная»
-- `nousresearch/hermes-3-llama-3.1-405b:free` — большая, неплохой ролеплей
-- `google/gemini-2.0-flash-exp:free` — быстрая, но цензурит
+- `cognitivecomputations/dolphin-mistral-24b-venice-edition:free` ⭐ — без цензуры, для ролеплея
+- `nousresearch/hermes-3-llama-3.1-405b:free` — большая, очень душевная
+- `meta-llama/llama-3.3-70b-instruct:free` — умная, но «правильная»
+- `qwen/qwen3-next-80b-a3b-instruct:free` — быстрая, нейтральная
 
 **Платные за копейки (если задушит качество):**
 - `gryphe/mythomax-l2-13b` — ~$0.07/M токенов, легендарная для ролеплея
