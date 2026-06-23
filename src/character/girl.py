@@ -51,6 +51,10 @@ class Girl:
     # Свободный текст-доп (если будем добавлять кастомный ввод позже).
     extra: str = ""
 
+    # Референс-фото для генерации (Telegram file_id). Если задан — Nano Banana
+    # получит это фото на вход и сохранит черты лица/фигуры.
+    reference_file_id: str = ""
+
     def to_dict(self) -> dict:
         return asdict(self)
 

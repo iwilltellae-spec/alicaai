@@ -21,6 +21,7 @@ from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from src.bot.handlers.photo_request import is_photo_request
 from src.character.persona import build_system_prompt
 from src.services.facts_extractor import extract_facts
 from src.services.memory import ChatMemory
@@ -84,17 +85,21 @@ async def _maybe_extract_facts(
     user_id: int, girl_id: str,
     memory: ChatMemory, llm: OpenRouterClient,
 ) -> None:
-    """Раз в N сообщений извлекаем факты в фоне."""
+    """Раз в N сообщений извлекаем факты в фоне. С дедупом."""
     try:
         count = await memory.message_count(user_id, girl_id)
         if count == 0 or count % FACTS_EVERY_N_USER_MSG != 0:
             return
         history = await memory.get_history(user_id, girl_id)
-        new_facts = await extract_facts(llm, history, last_n=FACTS_EVERY_N_USER_MSG * 2)
+        known = await memory.get_facts(user_id, girl_id)
+        new_facts = await extract_facts(
+            llm, history, known_facts=known,
+            last_n=FACTS_EVERY_N_USER_MSG * 2,
+        )
         for f in new_facts:
             await memory.add_fact(user_id, girl_id, f)
         if new_facts:
-            logger.info("Saved %d facts for user=%s", len(new_facts), user_id)
+            logger.info("Saved %d new facts for user=%s", len(new_facts), user_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Facts extraction tick failed: %s", e)
 
@@ -117,6 +122,9 @@ async def handle_text(
         return
     if not memory.has_consent(user_id):
         await message.answer("Сначала /start и подтверди возраст.")
+        return
+    # Запросы фото обрабатывает отдельный handler photo_request.
+    if is_photo_request(message.text):
         return
 
     lock = _busy[user_id]

@@ -101,14 +101,32 @@ async def cb_facts(cb: CallbackQuery, storage: ProfileStorage,
             f"<i>Пока ничего. Поговори с ней — со временем она запомнит "
             f"важные факты о тебе и будет их использовать.</i>"
         )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="mn:profile")],
+        ])
     else:
         lines = "\n".join(f"• {f}" for f in facts)
         text = f"<b>🧠 Что {girl.name} о тебе помнит</b>\n\n{lines}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="mn:profile")],
-    ])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Очистить память обо мне",
+                                  callback_data="mn:facts_clear")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="mn:profile")],
+        ])
     await cb.message.edit_text(text, reply_markup=kb)
     await cb.answer()
+
+
+@router.callback_query(F.data == "mn:facts_clear")
+async def cb_facts_clear(cb: CallbackQuery, storage: ProfileStorage,
+                         memory: ChatMemory) -> None:
+    profile = await storage.get(cb.from_user.id)
+    girl = profile.get_active_girl()
+    # Очищаем только факты, историю не трогаем.
+    if memory._db:  # noqa: SLF001
+        await memory._db.clear_facts(cb.from_user.id, girl.id)  # noqa: SLF001
+    memory._mem_facts.pop((cb.from_user.id, girl.id), None)  # noqa: SLF001
+    await cb.answer("Память обо мне очищена ✅", show_alert=False)
+    await cb_facts(cb, storage, memory)
 
 
 # ============== БОНУС ==============

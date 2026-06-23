@@ -16,6 +16,7 @@ from src.bot.middlewares.whitelist import WhitelistMiddleware
 from src.bot.tg_menu import setup_menu
 from src.config import settings
 from src.services.db import Database
+from src.services.image_gen import ImageGenerator
 from src.services.initiative import initiative_loop
 from src.services.keepalive import keepalive_loop
 from src.services.memory import ChatMemory
@@ -70,6 +71,10 @@ async def main() -> None:
     memory = ChatMemory(max_messages=settings.history_size, db=db)
     weather = WeatherService()
     profiles = ProfileStorage(db=db)
+    image_gen = ImageGenerator(
+        api_key=settings.openrouter_api_key,
+        bot_token=settings.bot_token,
+    )
     await profiles.init()
 
     # При старте подгрузим consent из БД для всех известных юзеров — чтобы
@@ -83,7 +88,7 @@ async def main() -> None:
 
     for observer in (dp.message, dp.callback_query):
         observer.middleware(WhitelistMiddleware(settings.allowed_user_ids))
-        observer.middleware(DependenciesMiddleware(llm, memory, weather, profiles))
+        observer.middleware(DependenciesMiddleware(llm, memory, weather, profiles, image_gen))
 
     dp.include_router(get_root_router())
 
@@ -116,6 +121,7 @@ async def main() -> None:
         initiative_task.cancel()
         await weather.close()
         await llm.close()
+        await image_gen.close()
         await bot.session.close()
         if db:
             await db.close()
