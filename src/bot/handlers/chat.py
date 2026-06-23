@@ -22,13 +22,17 @@ router = Router(name="chat")
 # ---------------- helpers ----------------
 
 async def _send_typing(message: Message, seconds: float) -> None:
-    """Держим индикатор «печатает...» на нужное время."""
+    """
+    Держим индикатор «печатает...» И обязательно ждём `seconds` секунд.
+    Sleep идёт независимо от того, удался ли typing-индикатор —
+    иначе сообщения могут прилететь без задержки если Telegram API залагал.
+    """
     elapsed = 0.0
     while elapsed < seconds:
         try:
             await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         except Exception:  # noqa: BLE001
-            return
+            pass  # индикатор не критичен, продолжаем спать
         chunk = min(4.0, seconds - elapsed)
         await asyncio.sleep(chunk)
         elapsed += chunk
@@ -50,13 +54,16 @@ async def _stream_reply_as_messages(
 ) -> None:
     """
     Разбивает ответ на пачку коротких сообщений и шлёт их по очереди
-    с реалистичными паузами и индикатором печати между ними.
+    с реалистичными паузами + индикатором печати между ними.
+    Перед КАЖДОЙ частью (включая первую) — пауза, чтобы выглядело
+    как будто Алиса печатает живьём.
     """
     parts = split_messages(full_text, max_parts=4)
     for i, part in enumerate(parts):
-        # Перед каждой частью (кроме первой) — пауза + «печатает...»
-        if i > 0:
-            await _send_typing(message, typing_pause(part))
+        # Пауза перед каждой частью.
+        # Первая — короткая (модель уже думала), остальные — пропорционально длине.
+        pause = typing_pause(part) if i > 0 else min(1.2, 0.4 + len(part) * 0.015)
+        await _send_typing(message, pause)
         formatted = asterisks_to_italic(part)
         await message.answer(formatted)
 
@@ -92,7 +99,8 @@ async def handle_text(
     await _send_typing(message, initial_pause)
 
     try:
-        reply = await llm.chat(messages)
+        # Чуть выше temperature → ответы живее, разнообразнее, меньше шаблонов.
+        reply = await llm.chat(messages, temperature=1.0)
     except OpenRouterError as e:
         await message.answer(f"❌ {e}")
         # откатываем непрожитое сообщение из истории
