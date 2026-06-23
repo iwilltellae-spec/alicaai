@@ -20,7 +20,9 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-IMAGE_MODEL = "google/gemini-2.5-flash-image-preview:free"
+# Nano Banana. Бесплатной версии (:free) больше нет — используем стабильную.
+# Через BYOK Google AI Studio ключа = бесплатно (тратит только твою Google квоту).
+IMAGE_MODEL = "google/gemini-2.5-flash-image"
 
 
 # Стиль обязателен — иначе модель делает «студийный» рекламный шот.
@@ -146,6 +148,13 @@ class ImageGenerator:
             "model": IMAGE_MODEL,
             "modalities": ["text", "image"],
             "messages": [{"role": "user", "content": content}],
+            # Жёстко роутим через Google AI Studio — там работает наш BYOK ключ,
+            # значит для нас бесплатно. Без этого OpenRouter может уйти на
+            # Vertex и спишет деньги с баланса OpenRouter.
+            "provider": {
+                "order": ["Google AI Studio"],
+                "allow_fallbacks": False,
+            },
         }
         session = await self._get_session()
         try:
