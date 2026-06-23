@@ -16,7 +16,8 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str = Field(..., alias="OPENROUTER_API_KEY")
     openrouter_model: str = Field(
-        "deepseek/deepseek-chat-v3.1:free", alias="OPENROUTER_MODEL"
+        "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+        alias="OPENROUTER_MODEL",
     )
 
     allowed_user_ids_raw: str = Field("", alias="ALLOWED_USER_IDS")
