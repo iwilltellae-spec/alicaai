@@ -151,38 +151,75 @@ class ImageGenerator:
         session = await self._get_session()
         try:
             async with session.post(API_URL, json=payload) as resp:
-                data = await resp.json()
+                # Сначала текст, чтобы корректно обработать non-JSON ответы.
+                raw = await resp.text()
+                try:
+                    import json as _json
+                    data = _json.loads(raw)
+                except Exception:
+                    data = None
+
                 if resp.status != 200:
-                    err = (data.get("error") or {}).get("message") or str(data)[:300]
-                    logger.error("Nano Banana %s: %s", resp.status, err)
+                    if isinstance(data, dict):
+                        err = (data.get("error") or {})
+                        msg = err.get("message") if isinstance(err, dict) else str(err)
+                        msg = msg or str(data)[:300]
+                    else:
+                        msg = raw[:400]
+                    logger.error("Nano Banana %s: %s", resp.status, msg)
                     return None
 
-                # Парсим ответ — изображение в choices[0].message.images[0].image_url.url
-                # (формат OpenAI-compat для image-output моделей).
+                if not isinstance(data, dict):
+                    logger.error("Nano Banana: ответ не JSON. raw=%s", raw[:400])
+                    return None
+
+                # Парсим — изображение в choices[0].message.images[] или content.
                 msg = (data.get("choices") or [{}])[0].get("message") or {}
 
-                # Вариант 1: ключ "images"
                 images = msg.get("images") or []
                 for img in images:
-                    url = (img.get("image_url") or {}).get("url") or img.get("url")
+                    if isinstance(img, dict):
+                        url = (img.get("image_url") or {}).get("url") or img.get("url")
+                    elif isinstance(img, str):
+                        url = img
+                    else:
+                        url = None
                     if url:
-                        return _decode_data_url(url)
+                        decoded = _decode_data_url(url) or await self._download_url(url)
+                        if decoded:
+                            return decoded
 
-                # Вариант 2: в content как массив с image_url
                 cont = msg.get("content")
                 if isinstance(cont, list):
                     for part in cont:
-                        if part.get("type") in ("image_url", "image"):
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") in ("image_url", "image", "output_image"):
                             url = (part.get("image_url") or {}).get("url") or part.get("url")
                             if url:
-                                return _decode_data_url(url)
+                                decoded = _decode_data_url(url) or await self._download_url(url)
+                                if decoded:
+                                    return decoded
 
                 logger.warning("Nano Banana: в ответе нет картинки. data=%s",
-                               str(data)[:400])
+                               str(data)[:500])
                 return None
         except Exception as e:  # noqa: BLE001
             logger.exception("Nano Banana error: %s", e)
             return None
+
+    async def _download_url(self, url: str) -> Optional[bytes]:
+        """Скачивает картинку по обычному HTTP URL."""
+        if not url.startswith("http"):
+            return None
+        try:
+            session = await self._get_session()
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Не смог скачать картинку %s: %s", url[:80], e)
+        return None
 
 
 def _decode_data_url(url: str) -> Optional[bytes]:
